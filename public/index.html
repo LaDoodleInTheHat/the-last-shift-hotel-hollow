@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>THE LAST SHIFT: Hotel Hollow</title>
+<meta name="description" content="A first-person co-op horror game. It's 3:17 AM and the staff never left.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23160507'/%3E%3Cpath d='M8 26V6h3v8h10V6h3v20h-3v-9H11v9z' fill='%23b08a2c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.min.js" } }
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="slats" class="hidden"></div>
+
+<!-- In-game HUD -->
+<div id="hud" class="hidden">
+  <div id="crosshair"></div>
+  <div class="hud-tl">
+    <div class="hud-label">MASTER KEYCARDS</div>
+    <div id="hud-keys"></div>
+    <div id="hud-objective"></div>
+  </div>
+  <div class="hud-bl">
+    <div class="meter" id="battery-meter"><span class="meter-label">FLASHLIGHT</span><div class="bar"><i id="battery-bar"></i></div><b id="battery-pct">100%</b></div>
+    <div class="meter" id="stamina-meter"><span class="meter-label">STAMINA</span><div class="bar"><i id="stamina-bar"></i></div></div>
+    <div class="rockets"><span class="meter-label">ROCKETS</span><span id="hud-rockets"></span></div>
+  </div>
+  <div id="hud-prompt"></div>
+</div>
+
+<div id="hud-players" class="hidden"></div>
+<div id="hud-mic" class="hidden"></div>
+<div id="toasts"></div>
+
+<!-- Spectator view -->
+<div id="spectate" class="hidden">
+  <div class="spec-banner"><b>YOUR SHIFT IS OVER</b><span id="spec-sub">You are watching from the other side.</span></div>
+  <canvas id="map" width="468" height="468"></canvas>
+  <div class="spec-legend" id="spec-legend"></div>
+  <div class="spec-help">WASD fly &middot; SPACE / C up / down &middot; SHIFT fast &middot; TAB jump to next &middot; M map size &middot; ESC release mouse</div>
+  <div class="spec-buttons" id="spec-buttons"></div>
+</div>
+
+<!-- Title -->
+<div id="screen-title" class="screen">
+  <div class="title-wrap">
+    <div class="pretitle">THE LAST SHIFT</div>
+    <h1>HOTEL HOLLOW</h1>
+    <p id="intro"></p>
+    <div id="press" class="blink">CLICK TO CLOCK IN</div>
+  </div>
+</div>
+
+<!-- Main menu -->
+<div id="screen-menu" class="screen hidden">
+  <div class="panel wide">
+    <div class="pretitle small">THE LAST SHIFT</div>
+    <h2>HOTEL HOLLOW</h2>
+    <div class="cols">
+      <div class="col">
+        <h3>NIGHT SHIFT</h3>
+        <div class="field">
+          <label>Difficulty</label>
+          <div class="seg" id="diff-seg">
+            <button data-diff="easy">Easy</button>
+            <button data-diff="normal" class="on">Normal</button>
+            <button data-diff="nightmare">Nightmare</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="seed-input">Seed <small>(optional &mdash; same seed, same hotel)</small></label>
+          <input id="seed-input" maxlength="24" placeholder="random" autocomplete="off" spellcheck="false">
+        </div>
+        <button class="btn primary" id="btn-solo">START SHIFT ALONE</button>
+        <div class="best" id="best-times"></div>
+      </div>
+      <div class="col">
+        <h3>CO-OP <small>up to 4 porters, proximity voice</small></h3>
+        <div class="field">
+          <label for="name-input">Your name</label>
+          <input id="name-input" maxlength="14" placeholder="Porter" autocomplete="off" spellcheck="false">
+        </div>
+        <button class="btn" id="btn-create">OPEN A NEW SHIFT</button>
+        <div class="join-row">
+          <input id="code-input" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false">
+          <button class="btn" id="btn-join">JOIN</button>
+        </div>
+        <div class="error" id="menu-error"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <b>WASD</b> move &middot; <b>SHIFT</b> sprint &middot; <b>C</b> crouch (quiet) &middot; <b>F</b> flashlight &middot; <b>E</b> hide in wardrobes &middot;
+      <b>CLICK / R</b> fire rocket (stuns) &middot; <b>V</b> mute mic &middot; <b>ESC</b> pause
+    </div>
+  </div>
+</div>
+
+<!-- Co-op lobby -->
+<div id="screen-lobby" class="screen hidden">
+  <div class="panel">
+    <div class="pretitle small">STAFF ROOM</div>
+    <h2>SHIFT <span id="lobby-code">----</span></h2>
+    <p class="hint">Share this code. Everyone gets the same hotel.</p>
+    <div id="lobby-players"></div>
+    <div class="field">
+      <label>Difficulty</label>
+      <div class="seg" id="lobby-diff">
+        <button data-diff="easy">Easy</button>
+        <button data-diff="normal">Normal</button>
+        <button data-diff="nightmare">Nightmare</button>
+      </div>
+    </div>
+    <button class="btn" id="btn-voice">ENABLE MICROPHONE</button>
+    <p class="hint" id="voice-hint">Voices carry about 25 metres and are muffled through walls. Headphones recommended. The Bellhop can hear you too.</p>
+    <button class="btn primary" id="btn-start">START SHIFT</button>
+    <p class="hint" id="lobby-wait">Waiting for the host to start the shift&hellip;</p>
+    <button class="btn ghost" id="btn-leave">LEAVE</button>
+  </div>
+</div>
+
+<!-- Pause -->
+<div id="screen-pause" class="screen hidden">
+  <div class="panel">
+    <h2>ON BREAK</h2>
+    <p class="hint" id="pause-hint">The hotel waits.</p>
+    <button class="btn primary" id="btn-resume">BACK TO WORK</button>
+    <button class="btn ghost" id="btn-quit">ABANDON SHIFT</button>
+  </div>
+</div>
+
+<!-- Death -->
+<div id="screen-death" class="screen hidden red">
+  <div class="panel">
+    <h2 class="dead">YOUR SHIFT IS OVER</h2>
+    <p class="hint" id="death-cause"></p>
+    <p class="hint" id="death-stats"></p>
+    <button class="btn primary" id="btn-retry">CLOCK IN AGAIN <small>(new hotel)</small></button>
+    <p class="hint" id="death-wait">Waiting for the host to open a new shift&hellip;</p>
+    <button class="btn" id="btn-spectate">SPECTATE THE HOTEL</button>
+    <button class="btn ghost" id="btn-menu">MAIN MENU</button>
+  </div>
+</div>
+
+<!-- Win -->
+<div id="screen-win" class="screen hidden">
+  <div class="panel">
+    <div class="pretitle small">4:00 AM &mdash; CLOCKED OUT</div>
+    <h2 id="win-title">YOU SURVIVED THE SHIFT</h2>
+    <table class="stats">
+      <tr><td>Time taken</td><td id="win-time"></td></tr>
+      <tr><td>Keycards</td><td id="win-keys"></td></tr>
+      <tr><td>Rockets used</td><td id="win-rockets"></td></tr>
+      <tr><td>Best time <span id="win-diff"></span></td><td id="win-best"></td></tr>
+      <tr><td>Seed</td><td id="win-seed"></td></tr>
+    </table>
+    <p class="hint" id="win-note"></p>
+    <button class="btn primary" id="btn-again">ANOTHER SHIFT <small>(new hotel)</small></button>
+    <p class="hint" id="win-wait">Waiting for the host to open a new shift&hellip;</p>
+    <button class="btn ghost" id="btn-win-menu">MAIN MENU</button>
+  </div>
+</div>
+
+<div id="jumpscare" class="hidden"><canvas id="scare-canvas"></canvas></div>
+<div id="fade"></div>
+<div id="fatal" class="hidden"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
