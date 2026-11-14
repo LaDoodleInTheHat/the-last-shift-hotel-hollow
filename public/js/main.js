@@ -2,16 +2,16 @@
 import * as THREE from 'three';
 import { generateHotel, hashSeed, CELL, GRID, WALL_H, T, idx, inBounds, lineOfSight } from './maze.js';
 import { World } from './render.js';
-import { MonsterManager, MONSTER_INFO } from './monsters.js';
+import { MonsterManager, MONSTER_INFO, MONSTER_STATE as S } from './monsters.js';
 import { AudioEngine } from './audio.js';
 import { Net } from './net.js';
 import { Voice } from './voice.js';
 import { UI, getBest, saveBest, formatTime } from './ui.js';
 
 const DIFFS = {
-  easy: { label: 'Easy', monsterSpeed: 0.85, managerSpeed: 2.9, drain: 0.8, startRockets: 2, powerMin: 80, powerMax: 140, stunMul: 1.35, grace: 25 },
-  normal: { label: 'Normal', monsterSpeed: 1.0, managerSpeed: 3.4, drain: 1.0, startRockets: 1, powerMin: 60, powerMax: 120, stunMul: 1, grace: 18 },
-  nightmare: { label: 'Nightmare', monsterSpeed: 1.14, managerSpeed: 3.8, drain: 1.3, startRockets: 0, powerMin: 45, powerMax: 90, stunMul: 0.75, grace: 10 },
+  easy: { label: 'Easy', monsterSpeed: 0.8, managerSpeed: 2.5, drain: 0.7, startRockets: 3, powerMin: 80, powerMax: 140, stunMul: 1.4, grace: 45 },
+  normal: { label: 'Normal', monsterSpeed: 1.0, managerSpeed: 2.95, drain: 1.0, startRockets: 2, powerMin: 60, powerMax: 120, stunMul: 1, grace: 30 },
+  nightmare: { label: 'Nightmare', monsterSpeed: 1.22, managerSpeed: 3.6, drain: 1.3, startRockets: 1, powerMin: 45, powerMax: 90, stunMul: 0.7, grace: 15 },
 };
 const DEATH_LINES = {
   concierge: 'The Concierge has attended to you.',
@@ -39,7 +39,10 @@ const game = {
   paused: false, locked: false,
   rockets: [], remotes: new Map(),
   seesMaid: false, maidT: 0, sendT: 0, monT: 0, hudT: 0, shake: 0, flash: 0, fear: 0,
+  explored: new Uint8Array(GRID * GRID), revealT: 0, miniT: 0, warnT: 0, lobbyT: 0,
+  hints: new Map(), hintGap: 0, managerSeenAt: 0,
 };
+const config = { iceServers: null, forceRelay: new URLSearchParams(location.search).has('relay') };
 
 const me = {
   id: 'local', name: 'Porter', x: 0, z: 0, yaw: 0, pitch: 0, vx: 0, vz: 0, eye: EYE,
@@ -135,6 +138,7 @@ function startGame(seed, diff, opts = {}) {
   game.elevUnlocked = false; game.managerAt = -1; game.managerAnnounced = false;
   game.nextPower = game.time + rand(game.cfg.powerMin, game.cfg.powerMax); game.powerUntil = -1;
   game.seesMaid = false; game.shake = 0; game.flash = 0; game.fear = 0;
+  game.explored.fill(0); game.revealT = 0; game.hints.clear(); game.hintGap = game.clock + 9; game.managerSeenAt = 0;
   world.setElevatorUnlocked(false);
 
   Object.assign(me, {
@@ -163,6 +167,7 @@ function startGame(seed, diff, opts = {}) {
   setTimeout(() => ui.fade(false), 350);
   ui.toast('3:17 AM', '', 3200);
   setTimeout(() => { if (game.mode === 'playing') ui.toast('Find the five master keycards. Do not be found.', 'small', 5000); }, 1800);
+  setTimeout(() => { if (game.mode === 'playing' && me.alive) hint('map', 'The keycards are marked on your map. The staff are not.', 1e9, true); }, 8000);
   lockPointer();
 }
 
@@ -215,8 +220,8 @@ function takePickup(id, byName, silent) {
 function collect(p) {
   takePickup(p.id, null, false);
   if (p.type === 'battery') {
-    me.battery = Math.min(100, me.battery + 45);
-    audio.play('battery'); ui.toast('Battery  +45%', 'small', 1800);
+    me.battery = Math.min(100, me.battery + 60);
+    audio.play('battery'); ui.toast('Battery  +60%', 'small', 1800);
   } else if (p.type === 'rocket') {
     me.rockets++;
     audio.play('rocketPickup'); ui.toast('Signal rocket', 'small', 1800);
@@ -237,6 +242,74 @@ function startPower(dur) {
   game.powerUntil = game.time + dur;
   world.setPower(true);
   audio.play('powerDown');
+  if (game.mode === 'playing' && me.alive) hint('power', "The power's out. Stay still and listen until it comes back.", 40, true);
+}
+
+// ---------------------------------------------------------------------------
+// Warnings and the porter's map
+// ---------------------------------------------------------------------------
+function hint(key, text, cooldown = 30, force = false) {
+  const now = game.clock;
+  if ((game.hints.get(key) || 0) > now) return false;
+  if (!force && now < game.hintGap) return false;
+  game.hints.set(key, now + cooldown);
+  game.hintGap = now + 4.5;
+  ui.warn(text);
+  return true;
+}
+
+function updateWarnings() {
+  const ms = game.monsters.byType;
+  world.camera.getWorldDirection(tmpV);
+  const fl = Math.hypot(tmpV.x, tmpV.z) || 1, fx = tmpV.x / fl, fz = tmpV.z / fl;
+  const look = (m) => {
+    const dx = m.x - me.x, dz = m.z - me.z, d = Math.hypot(dx, dz) || 0.001;
+    return { d, behind: (dx * fx + dz * fz) / d < -0.3, los: d < 24 && lineOfSight(game.hotel.grid, me.x, me.z, m.x, m.z, doorClosed) };
+  };
+  const near = game.monsters.nearest(me.x, me.z);
+  if (me.hidden) { if (near.dist < 8) hint('hold', 'Hold your breath.', 18); return; }
+  const bh = ms.bellhop, mg = ms.manager, maid = ms.maid, con = ms.concierge;
+  if (bh.active && bh.state === S.charge && bh.targetId === me.id && hint('bhCharge', 'It heard you. RUN.', 10, true)) return;
+  if (mg.active && mg.state !== S.stunned) {
+    const i = look(mg);
+    if (i.d < 11 && i.behind && hint('behind', "Don't turn around.", 16, true)) return;
+    if (game.managerSeenAt && game.time > game.managerSeenAt + 7 && hint('mgr', "The Manager always knows where you are. Wardrobes won't save you.", 1e9)) return;
+  }
+  if (maid.active && maid.state !== S.stunned) {
+    const i = look(maid);
+    if (i.los && i.d < 22) {
+      if (game.seesMaid) { if (hint('maidSee', "Don't take your eyes off the Maid.", 20)) return; }
+      else if (i.d < 14 && hint('maidBack', 'The weeping stopped. She only moves when nobody is looking.', 22)) return;
+    }
+  }
+  if (con.active && con.state !== S.stunned) {
+    const i = look(con);
+    if (i.d < 8 && i.behind && i.los) { if (hint('behind', "Don't turn around. Keep walking.", 16)) return; }
+    else if (i.d < 17 && hint('bell', 'That bell is getting closer. He never stops walking.', 50)) return;
+  }
+  if (bh.active) {
+    const i = look(bh);
+    if (bh.state === S.rest && i.d < 13) { if (hint('bhRest', "It's out of breath. Go, quietly.", 25)) return; }
+    else if ((bh.state === S.wander || bh.state === S.alert) && i.d < 13 && hint('bhNear', 'Something is listening. Hold C to creep past.', 40)) return;
+  }
+  for (const m of game.monsters.list) {
+    if (m.active && m.state === S.stunned && Math.hypot(m.x - me.x, m.z - me.z) < 10 && hint('stun', "It's stunned. Move.", 14)) return;
+  }
+  if (near.dist < 12 && nearWardrobe() && hint('hide', 'Hide. Now.', 30)) return;
+  if (me.flashOn && me.battery < 20 && me.battery > 0) hint('batt', 'Your flashlight is dying. Find a battery.', 60);
+}
+
+/** Mark the cells the porter can currently see as explored. */
+function reveal() {
+  const grid = game.hotel.grid;
+  const cx = Math.floor(me.x / CELL), cy = Math.floor(me.z / CELL);
+  for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+    const x = cx + dx, y = cy + dy;
+    if (!inBounds(x, y)) continue;
+    const k = idx(x, y);
+    if (game.explored[k] || grid[k] === T.WALL) continue;
+    if (lineOfSight(grid, me.x, me.z, (x + 0.5) * CELL, (y + 0.5) * CELL, doorClosed)) game.explored[k] = 1;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -303,11 +376,11 @@ function updatePlayer(dt) {
     const wantSprint = keys.has('ShiftLeft') || keys.has('ShiftRight');
     const sprinting = wantSprint && moving && !me.crouch && !me.exhausted && me.stamina > 0 && f > -0.1;
     if (sprinting) {
-      me.stamina = Math.max(0, me.stamina - dt / 6.5); me.staminaDelay = 0.9;
+      me.stamina = Math.max(0, me.stamina - dt / 8); me.staminaDelay = 0.8;
       if (me.stamina <= 0) me.exhausted = true;
     } else {
       me.staminaDelay -= dt;
-      if (me.staminaDelay <= 0) me.stamina = Math.min(1, me.stamina + dt / 8);
+      if (me.staminaDelay <= 0) me.stamina = Math.min(1, me.stamina + dt / 6);
       if (me.stamina > 0.3) me.exhausted = false;
     }
     const speed = me.crouch ? CROUCH : sprinting ? SPRINT : WALK;
@@ -323,7 +396,7 @@ function updatePlayer(dt) {
     const prevBob = me.bob;
     me.bob += moved * (me.crouch ? 2.7 : sprinting ? 1.9 : 2.2);
     if (Math.floor(me.bob / Math.PI) !== Math.floor(prevBob / Math.PI)) audio.step(me.crouch ? 'crouch' : sprinting ? 'sprint' : 'walk');
-    me.moveNoise = me.speed < 0.5 || me.crouch ? 0 : sprinting ? 11 : 3.5;
+    me.moveNoise = me.speed < 0.5 || me.crouch ? 0 : sprinting ? 9 : 2.2;
 
     // pickups
     for (const p of game.pickups.values()) {
@@ -370,7 +443,7 @@ function updatePlayer(dt) {
   world.setFlashlight(level, me.swayX + Math.sin(me.bob) * 0.13 * mv, me.swayY + Math.cos(me.bob * 2) * 0.07 * mv + Math.sin(t * 0.9) * 0.02);
 
   me.noiseBurst = Math.max(0, me.noiseBurst - dt);
-  const voiceNoise = voice && voice.talking ? Math.min(13, 5 + voice.level * 60) : 0;
+  const voiceNoise = voice && voice.talking ? Math.min(10, 4 + voice.level * 40) : 0;
   me.noise = Math.max(me.moveNoise, voiceNoise, me.noiseBurst > 0 ? 16 : 0);
 }
 
@@ -608,8 +681,16 @@ function dropVisuals(r) {
 
 function refreshLobby() {
   if (!game.coop) return;
-  const players = [...net.players.values()].map((p) => ({ name: p.name, self: p.id === net.id, host: p.id === net.hostId }));
-  ui.setLobby({ code: net.code, players, isHost: net.isHost, diff: game.lobbyDiff, micOn: voice && voice.micOn, micError: voice && voice.error });
+  const players = [...net.players.values()].map((p) => {
+    const self = p.id === net.id;
+    let v = '', ok = false;
+    if (voice) {
+      if (self) { v = voice.micOn ? (voice.muted ? 'mic muted' : 'mic live') : 'mic off'; ok = voice.micOn && !voice.muted; }
+      else { const st = voice.status(p.id); v = st === 'direct' ? 'voice connected' : st === 'relay' ? 'voice connected (relayed)' : 'voice connecting…'; ok = st !== 'connecting'; }
+    }
+    return { name: p.name, self, host: p.id === net.hostId, voice: v, voiceOk: ok, talking: voice && (self ? voice.talking : voice.isSpeaking(p.id)) };
+  });
+  ui.setLobby({ code: net.code, players, isHost: net.isHost, diff: game.lobbyDiff, micOn: voice && voice.micOn, micMuted: voice && voice.muted, micLevel: voice ? voice.level : 0, micError: voice && voice.error });
 }
 
 function updateRemotes(dt) {
@@ -633,8 +714,10 @@ function setupNet() {
     for (const r of game.remotes.values()) dropVisuals(r);
     game.remotes.clear();
     if (voice) voice.dispose();
-    voice = new Voice(net, audio);
+    voice = new Voice(net, audio, config);
     for (const p of m.players) if (p.id !== net.id) { addRemote(p.id, p.name); voice.addPeer(p.id); }
+    // ask for the microphone straight away: voice chat is useless if nobody finds the button
+    voice.enableMic().then(() => refreshLobby());
     if (m.started) startGame(m.seed, m.diff, { picked: m.picked, elapsed: m.elapsed });
     else { ui.show('lobby'); refreshLobby(); }
   });
@@ -672,6 +755,7 @@ function setupNet() {
   });
   net.on('mon', (m) => { if (!net.isHost && game.monsters) game.monsters.applyNet(m.m); });
   net.on('rtc', (m) => { if (voice) voice.handleSignal(m.from, m.d); });
+  net.on('bin', (buf) => { if (voice) voice.handleRelayAudio(buf); });
   net.on('ev', (m) => {
     if (!inGame()) return;
     const name = net.nameOf(m.id);
@@ -729,7 +813,7 @@ const handlers = {
   onResume: () => lockPointer(),
   onVoice: async () => {
     if (!voice) return;
-    await voice.enableMic();
+    if (voice.micOn) voice.setMuted(!voice.muted); else await voice.enableMic();
     refreshLobby();
   },
 };
@@ -766,7 +850,15 @@ function tick(dt) {
     cam.position.set(me.x, 1.6, me.z);
     cam.rotation.set(Math.sin(game.clock * 0.3) * 0.05, me.yaw, 0);
     world.setFlashlight(0.9 + Math.sin(game.clock * 23) * 0.03, Math.sin(game.clock * 0.6) * 0.3, Math.sin(game.clock * 0.9) * 0.15);
+    actors.length = 0;
     world.update(dt, game.clock, cam.position, actors);
+    if (voice) {
+      cam.getWorldDirection(tmpV);
+      audio.setListener(cam.position.x, cam.position.y, cam.position.z, tmpV.x, tmpV.y, tmpV.z);
+      voice.update(cam.position, () => ({ audible: true, spatial: false }));
+      game.lobbyT -= dt;
+      if (game.lobbyT <= 0 && ui.screen === 'lobby') { game.lobbyT = 0.15; refreshLobby(); }
+    }
     return;
   }
   const t = (game.time += game.over ? 0 : dt);
@@ -793,6 +885,7 @@ function tick(dt) {
   game.monsters.update(dt, game.clock, { players: states, isDoorClosed: doorClosed, time: game.clock, grace: t < game.cfg.grace }, host);
   if (game.monsters.manager.active && !game.managerAnnounced) {
     game.managerAnnounced = true;
+    game.managerSeenAt = game.time;
     audio.play('managerPA');
     ui.toast('THE MANAGER WOULD LIKE A WORD.', 'bad', 6000);
   }
@@ -872,8 +965,21 @@ function tick(dt) {
   if (game.mode === 'playing' && me.alive) {
     ui.setHUD({
       battery: me.battery, flashlightOn: me.flashOn, stamina: me.stamina, keys: game.keys, rockets: me.rockets,
-      objective: game.elevUnlocked ? 'Reach the elevator.' : `Find the master keycards hidden in the guest rooms.`,
+      objective: game.elevUnlocked ? 'Reach the elevator. It is marked on your map.' : 'Find the master keycards. They are marked on your map.',
     });
+    game.revealT -= dt;
+    if (game.revealT <= 0) { game.revealT = 0.25; if (!me.hidden) reveal(); }
+    game.miniT -= dt;
+    if (game.miniT <= 0) {
+      game.miniT = 0.06;
+      const keysLeft = [];
+      for (const p of game.pickups.values()) if (p.type === 'key') keysLeft.push(p);
+      const mates = [];
+      for (const r of game.remotes.values()) if (r.alive && r.got) mates.push(r);
+      ui.drawMini(game.hotel, game.explored, { me, keys: keysLeft, mates, elevUnlocked: game.elevUnlocked });
+    }
+    game.warnT -= dt;
+    if (game.warnT <= 0 && !game.dying && !game.over) { game.warnT = 0.25; updateWarnings(); }
   }
   if (game.mode === 'spectating') {
     ui.drawMap(game.hotel, {
@@ -965,11 +1071,12 @@ function boot() {
   world = new World(canvas);
   net = new Net();
   ui = new UI(handlers, audio);
+  fetch('/config.json').then((r) => r.json()).then((c) => { if (c && Array.isArray(c.iceServers)) config.iceServers = c.iceServers; }).catch(() => {});
   setupNet();
   setupInput();
   setBackdrop();
   ui.show('title');
-  window.__tls = { game, me, spec, world, audio, net, ui, handlers, startGame, enterSpectate, die, keys, tick, get voice() { return voice; } };
+  window.__tls = { game, me, spec, world, audio, net, ui, handlers, startGame, enterSpectate, die, keys, tick, hint, config, get voice() { return voice; } };
   requestAnimationFrame(frame);
 }
 

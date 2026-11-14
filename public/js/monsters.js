@@ -6,10 +6,10 @@ import { CELL, GRID, idx, inBounds, astar, bfs, lineOfSight, walkable } from './
 
 export const MONSTER_TYPES = ['concierge', 'maid', 'bellhop', 'manager'];
 export const MONSTER_INFO = {
-  concierge: { name: 'THE CONCIERGE', color: 0xff5040, catchR: 0.95, stun: 7, eye: 2.0 },
-  maid: { name: 'THE MAID', color: 0xd0d8ff, catchR: 0.9, stun: 7, eye: 1.55 },
-  bellhop: { name: 'THE BELLHOP', color: 0xff9020, catchR: 1.0, stun: 8, eye: 0.6 },
-  manager: { name: 'THE MANAGER', color: 0xff0020, catchR: 1.1, stun: 3, eye: 2.3 },
+  concierge: { name: 'THE CONCIERGE', color: 0xff5040, catchR: 0.85, stun: 10, eye: 2.0 },
+  maid: { name: 'THE MAID', color: 0xd0d8ff, catchR: 0.8, stun: 10, eye: 1.55 },
+  bellhop: { name: 'THE BELLHOP', color: 0xff9020, catchR: 0.9, stun: 10, eye: 0.6 },
+  manager: { name: 'THE MANAGER', color: 0xff0020, catchR: 1.0, stun: 5, eye: 2.3 },
 };
 const STATES = ['idle', 'wander', 'hunt', 'frozen', 'alert', 'charge', 'rest', 'stunned'];
 const S = Object.fromEntries(STATES.map((s, i) => [s, i]));
@@ -307,21 +307,25 @@ export class Monster {
       this.path = null;
       return;
     }
-    if (ctx.grace) { this.state = S.idle; return; }
+    if (ctx.grace) {
+      // nobody hunts during the opening minute, but the Maid still hides her face when watched
+      this.state = this.type === 'maid' && ctx.players.some((p) => p.alive && p.seesMaid) ? S.frozen : S.idle;
+      return;
+    }
     const mul = this.cfg.monsterSpeed;
     switch (this.type) {
       case 'concierge': {
         const t = this.pickTarget(dt, cands);
-        if (t) { this.state = S.hunt; this.chase(dt, t, 2.05 * mul); }
+        if (t) { this.state = S.hunt; this.chase(dt, t, 1.75 * mul); }
         else { this.state = S.wander; this.wander(dt, 1.5 * mul); }
         break;
       }
       case 'maid': {
         const observed = ctx.players.some((p) => p.alive && p.seesMaid);
-        if (observed) { this.state = S.frozen; this.thaw = 0.35; break; }
+        if (observed) { this.state = S.frozen; this.thaw = 0.75; break; }
         if (this.thaw > 0) { this.thaw -= dt; this.state = S.frozen; break; }
-        const t = this.pickTarget(dt, cands, 26);
-        if (t) { this.state = S.hunt; this.chase(dt, t, 5.4 * mul); }
+        const t = this.pickTarget(dt, cands, 15);
+        if (t) { this.state = S.hunt; this.chase(dt, t, 3.7 * mul); }
         else { this.state = S.wander; this.wander(dt, 1.3 * mul, 0.6); }
         break;
       }
@@ -339,7 +343,7 @@ export class Monster {
   }
 
   simBellhop(dt, ctx, cands, mul) {
-    const seen = cands.filter((p) => (p._los && p._dist < 10.5) || this.knows.has(p.id)).sort((a, b) => a._dist - b._dist)[0] || null;
+    const seen = cands.filter((p) => (p._los && p._dist < 8.5) || this.knows.has(p.id)).sort((a, b) => a._dist - b._dist)[0] || null;
     if (this.state === S.idle || this.state === S.hunt || this.state === S.frozen || this.state === S.stunned) this.state = S.wander;
     if (this.state === S.rest) {
       this.timer -= dt;
@@ -351,14 +355,14 @@ export class Monster {
       this.chargeT -= dt;
       if (t && t._los) this.lostT = 0; else this.lostT += dt;
       if (!t || this.chargeT <= 0 || this.lostT > 2.5) {
-        this.state = S.rest; this.timer = 3.5; this.targetId = null; this.path = null;
+        this.state = S.rest; this.timer = 5.5; this.targetId = null; this.path = null;
         return;
       }
-      this.chase(dt, t, 5.35 * mul);
+      this.chase(dt, t, 4.4 * mul);
       return;
     }
     if (seen) {
-      this.state = S.charge; this.targetId = seen.id; this.chargeT = 7; this.lostT = 0; this.path = null;
+      this.state = S.charge; this.targetId = seen.id; this.chargeT = 5; this.lostT = 0; this.path = null;
       this.justCharged = true;
       return;
     }
@@ -371,7 +375,7 @@ export class Monster {
     }
     if (loud) this.hear(loud.x, loud.z);
     if (this.state === S.alert) {
-      const arrived = !this.follow(dt, 3.9 * mul);
+      const arrived = !this.follow(dt, 3.1 * mul);
       if (arrived) {
         this.timer -= dt;
         this.heading += dt * 2.4; // looking around
@@ -508,8 +512,8 @@ export class MonsterManager {
       let near = Infinity;
       for (const f of fields) if (f[c] >= 0 && f[c] < near) near = f[c];
       if (near === Infinity) near = 20;
-      // prefer about 16 cells of walking from the nearest porter
-      const score = -Math.abs(near - 16) + Math.random() * 2;
+      // prefer about 20 cells of walking from the nearest porter
+      const score = -Math.abs(near - 20) + Math.random() * 2;
       if (score > bestScore) { bestScore = score; best = { x: c % GRID, y: (c / GRID) | 0 }; }
     }
     m.spawn(best.x, best.y);

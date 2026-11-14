@@ -92,7 +92,7 @@ input:focus { border-color: var(--gold-bright); }
 .toast.small { font-size: 14px; letter-spacing: 0.12em; color: #cbbf9f; }
 .toast.bad { color: #ff4a4a; }
 @keyframes toast { 0% { opacity: 0; transform: translateY(8px); } 8%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; } }
-#hud-players { position: fixed; right: 20px; top: 18px; z-index: 12; text-align: right; font-size: 14px; pointer-events: none; text-shadow: 0 1px 4px #000; }
+#hud-players { position: fixed; right: 20px; top: 218px; z-index: 12; text-align: right; font-size: 14px; pointer-events: none; text-shadow: 0 1px 4px #000; }
 .pl { margin-bottom: 5px; color: #cbbf9f; }
 .pl.dead { color: #7a3a3a; text-decoration: line-through; }
 .pl.talk::before { content: '\25C9  '; color: #7ee081; }
@@ -127,3 +127,14 @@ input:focus { border-color: var(--gold-bright); }
 #fade { position: fixed; inset: 0; z-index: 30; background: #000; opacity: 0; pointer-events: none; transition: opacity 0.6s; }
 #fade.on { opacity: 1; }
 #fatal { position: fixed; inset: 0; z-index: 50; background: #100; color: #f88; padding: 30px; font-family: monospace; white-space: pre-wrap; overflow: auto; }
+
+/* ---------- minimap + warnings ---------- */
+#minimap { position: absolute; right: 18px; top: 16px; width: 188px; height: 188px; border: 1px solid rgba(185, 149, 58, 0.5); background: rgba(4, 2, 3, 0.55); image-rendering: pixelated; }
+#hud-warn { position: absolute; left: 50%; top: 72%; transform: translateX(-50%); width: min(92vw, 720px); text-align: center; font-size: 19px; font-style: italic; letter-spacing: 0.06em; color: #ff6a5e; text-shadow: 0 0 16px rgba(120, 0, 0, 0.95), 0 2px 4px #000; opacity: 0; transition: opacity 0.6s; }
+#hud-warn.show { opacity: 1; transition: opacity 0.25s; }
+#lobby-mic { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 11px; letter-spacing: 0.2em; color: var(--gold); }
+#lobby-mic i { flex: 1; height: 7px; background: rgba(0, 0, 0, 0.6); border: 1px solid rgba(185, 149, 58, 0.4); }
+#lobby-mic i b { display: block; height: 100%; width: 0; background: #7ee081; }
+.lp em { font-style: normal; font-size: 11px; letter-spacing: 0.08em; color: #8a7d60; margin-left: 8px; }
+.lp em.ok { color: #7ee081; }
+.lp.talk { box-shadow: inset 3px 0 0 #7ee081; }

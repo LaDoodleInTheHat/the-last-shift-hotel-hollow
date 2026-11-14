@@ -33,6 +33,10 @@ Free instances sleep when idle, so the first visit after a while takes a moment 
 Find 5 master keycards hidden in guest rooms. The fifth unlocks the elevator and summons the
 Manager. Reach the elevator to clock out. Being caught by any member of staff ends your shift.
 
+The map in the top-right corner starts empty and fills in as you explore. Keycards are always
+marked on it (and the elevator, once it unlocks); the staff never are. Short red warnings appear
+when something is close.
+
 | Key | Action |
 | --- | --- |
 | WASD / mouse | Move / look (arrow keys also turn) |
@@ -54,7 +58,9 @@ Manager. Reach the elevator to clock out. Being caught by any member of staff en
 ### Co-op, voice and spectating
 
 - One player opens a shift and shares the 4-letter code. Keycards are shared by the team.
-- Voice is WebRTC peer-to-peer, positioned in 3D: it fades over about 25 m and is muffled through walls. Use headphones. There is no TURN server, so players behind strict NATs may not connect.
+- Voice is positioned in 3D: it fades over about 25 m and is muffled through walls. Use headphones. The game asks for your microphone when you join a shift; press V in game to mute or unmute.
+- Voice connects peer-to-peer (WebRTC) where it can. If two players cannot reach each other directly, that pair automatically falls back to relaying audio through the game server, so voice works wherever the game does. The lobby shows which one each player is using. Append `?relay` to the URL to force the relay path for testing.
+- Optional: set an `ICE_SERVERS` environment variable (a JSON array of WebRTC ICE servers, for example a TURN service) to give the peer-to-peer path more ways through.
 - When you die you become a spectator: a free-flying camera with full lighting, beacons on every porter and monster, and a live map (Tab jumps between targets, M enlarges the map). The dead can talk to each other; the living cannot hear them.
 - The host's browser simulates the monsters. If the host leaves, another player takes over.
 

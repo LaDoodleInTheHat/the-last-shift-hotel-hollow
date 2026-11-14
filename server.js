@@ -19,6 +19,11 @@ const DIFFS = ['easy', 'normal', 'nightmare'];
 const app = express();
 app.disable('x-powered-by');
 app.get('/healthz', (_req, res) => res.type('text/plain').send('ok'));
+
+// Optional: extra WebRTC ICE servers (e.g. a TURN service) as a JSON array in ICE_SERVERS.
+let iceServers = null;
+try { if (process.env.ICE_SERVERS) iceServers = JSON.parse(process.env.ICE_SERVERS); } catch { console.warn('ICE_SERVERS is not valid JSON; ignoring it.'); }
+app.get('/config.json', (_req, res) => res.json({ iceServers: Array.isArray(iceServers) ? iceServers : null }));
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules', 'three', 'build'), { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
@@ -81,10 +86,24 @@ function joinRoom(ws, room, name) {
   broadcast(room, { t: 'peer-join', id: ws.id, name }, ws.id);
 }
 
+// Voice fallback: when two players cannot connect peer-to-peer, their audio frames are
+// sent here as binary messages and forwarded to the peers they asked for.
+function relayVoice(ws, raw) {
+  const room = ws.room;
+  if (!room || !ws.relayTo.length || raw.length > 8192) return;
+  const head = Buffer.from(ws.id, 'ascii');
+  const out = Buffer.concat([Buffer.from([head.length]), head, raw]);
+  for (const id of ws.relayTo) {
+    const p = room.players.get(id);
+    if (p && p.ws.readyState === 1 && p.ws.bufferedAmount < 256 * 1024) p.ws.send(out, { binary: true });
+  }
+}
+
 function leaveRoom(ws) {
   const room = ws.room;
   if (!room) return;
   ws.room = null;
+  ws.relayTo = [];
   room.players.delete(ws.id);
   if (room.players.size === 0) {
     rooms.delete(room.code);
@@ -100,10 +119,12 @@ function leaveRoom(ws) {
 wss.on('connection', (ws) => {
   ws.id = 'p' + (nextId++).toString(36);
   ws.room = null;
+  ws.relayTo = [];
   ws.alive = true;
   ws.on('pong', () => { ws.alive = true; });
 
-  ws.on('message', (raw) => {
+  ws.on('message', (raw, isBinary) => {
+    if (isBinary) { relayVoice(ws, raw); return; }
     let m;
     try { m = JSON.parse(raw.toString()); } catch { return; }
     if (!m || typeof m.t !== 'string') return;
@@ -182,6 +203,10 @@ wss.on('connection', (ws) => {
         if (!room || typeof m.to !== 'string') return;
         const peer = room.players.get(m.to);
         if (peer) send(peer.ws, { t: 'rtc', from: ws.id, d: m.d });
+        break;
+      }
+      case 'vr': {
+        ws.relayTo = Array.isArray(m.to) ? m.to.filter((v) => typeof v === 'string').slice(0, MAX_PLAYERS) : [];
         break;
       }
       case 'ping':

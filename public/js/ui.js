@@ -154,10 +154,11 @@ export class UI {
   }
 
   // --- lobby ------------------------------------------------------------------
-  setLobby({ code, players, isHost, diff, micOn, micError }) {
+  setLobby({ code, players, isHost, diff, micOn, micMuted, micLevel, micError }) {
     $('lobby-code').textContent = code;
-    $('lobby-players').innerHTML = players.map((p) =>
-      `<div class="lp">${escapeHtml(p.name)}${p.self ? ' <small>(you)</small>' : ''}<span>${p.host ? 'HOST' : ''}</span></div>`).join('');
+    const rows = players.map((p) =>
+      `<div class="lp${p.talking ? ' talk' : ''}"><div>${escapeHtml(p.name)}${p.self ? ' <small>(you)</small>' : ''}<em class="${p.voiceOk ? 'ok' : ''}">${escapeHtml(p.voice || '')}</em></div><span>${p.host ? 'HOST' : ''}</span></div>`).join('');
+    if (rows !== this.last.lobbyRows) { this.last.lobbyRows = rows; $('lobby-players').innerHTML = rows; }
     for (const b of $('lobby-diff').querySelectorAll('button')) {
       b.classList.toggle('on', b.dataset.diff === diff);
       b.disabled = !isHost;
@@ -165,9 +166,14 @@ export class UI {
     $('btn-start').classList.toggle('hidden', !isHost);
     $('lobby-wait').classList.toggle('hidden', isHost);
     const vb = $('btn-voice');
-    vb.textContent = micOn ? 'MICROPHONE ON' : 'ENABLE MICROPHONE';
-    vb.classList.toggle('on', !!micOn);
-    if (micError) $('voice-hint').textContent = micError + ' You can still hear the others.';
+    const label = micOn ? (micMuted ? 'MICROPHONE MUTED — CLICK TO UNMUTE' : 'MICROPHONE LIVE — CLICK TO MUTE') : 'ENABLE MICROPHONE';
+    if (vb.textContent !== label) vb.textContent = label;
+    vb.classList.toggle('on', !!micOn && !micMuted);
+    $('lobby-mic').classList.toggle('hidden', !micOn);
+    $('lobby-mic-level').style.width = Math.min(100, (micLevel || 0) * 450) + '%';
+    const hint = micError ? micError + ' You can still hear the others.'
+      : 'Voices carry about 25 metres and are muffled through walls. Headphones recommended. The Bellhop can hear you too.';
+    if (this.last.voiceHint !== hint) { this.last.voiceHint = hint; $('voice-hint').textContent = hint; }
   }
 
   // --- HUD ----------------------------------------------------------------------
@@ -215,6 +221,53 @@ export class UI {
 
   setHidden(on) { $('slats').classList.toggle('hidden', !on); }
 
+  /** A short red line of advice, lower centre. */
+  warn(text) {
+    const el = $('hud-warn');
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(this.warnTimer);
+    this.warnTimer = setTimeout(() => el.classList.remove('show'), 4200);
+  }
+
+  /**
+   * The porter's own map: only what you have walked past is drawn, but keycards are marked.
+   * o: { me:{x,z,yaw}, keys:[{x,z}], mates:[{x,z}], elevUnlocked }
+   */
+  drawMini(hotel, explored, o) {
+    const cv = $('minimap'), ctx = cv.getContext('2d');
+    const S = cv.width, px = S / GRID;
+    ctx.clearRect(0, 0, S, S);
+    for (let y = 0; y < GRID; y++) for (let x = 0; x < GRID; x++) {
+      const k = idx(x, y);
+      if (!explored[k]) continue;
+      const t = hotel.grid[k];
+      ctx.fillStyle = t === T.HALL ? '#7a2c35' : t === T.ROOM ? '#4d5c3e' : t === T.DOOR ? '#c9a84f' : o.elevUnlocked ? '#40ff70' : '#c02020';
+      ctx.fillRect(x * px, y * px, px, px);
+    }
+    const w2m = (v) => (v / CELL) * px;
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 220);
+    const e = hotel.elevator;
+    if (o.elevUnlocked) {
+      const ex = (e.x + 0.5) * px, ey = (e.y + 0.5) * px;
+      ctx.fillStyle = '#40ff70'; ctx.fillRect(e.x * px, e.y * px, px, px);
+      ctx.strokeStyle = `rgba(64,255,112,${0.9 - pulse * 0.6})`; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(ex, ey, 5 + pulse * 7, 0, Math.PI * 2); ctx.stroke();
+    }
+    for (const k of o.keys) {
+      const x = w2m(k.x), y = w2m(k.z);
+      ctx.strokeStyle = `rgba(255,224,138,${0.8 - pulse * 0.6})`; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, 4 + pulse * 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#ffe08a'; ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    }
+    for (const m of o.mates) { ctx.fillStyle = '#6ad0ff'; ctx.beginPath(); ctx.arc(w2m(m.x), w2m(m.z), 3, 0, Math.PI * 2); ctx.fill(); }
+    ctx.save();
+    ctx.translate(w2m(o.me.x), w2m(o.me.z)); ctx.rotate(-o.me.yaw);
+    ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(4.5, 5); ctx.lineTo(0, 2.5); ctx.lineTo(-4.5, 5); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+
   setPlayers(list) {
     const el = $('hud-players');
     if (!list || !list.length) { el.classList.add('hidden'); this.last.players = ''; return; }
@@ -231,7 +284,7 @@ export class UI {
     if (this.last.mic !== state) {
       this.last.mic = state;
       el.classList.toggle('muted', state === 'muted');
-      el.innerHTML = state === 'off' ? 'MIC OFF' : state === 'muted' ? 'MIC MUTED &nbsp;[V]' : 'MIC LIVE &nbsp;[V]<i><b id="mic-level"></b></i>';
+      el.innerHTML = state === 'off' ? 'MIC OFF &nbsp;— press V to talk' : state === 'muted' ? 'MIC MUTED &nbsp;[V]' : 'MIC LIVE &nbsp;[V]<i><b id="mic-level"></b></i>';
     }
     const lv = $('mic-level');
     if (lv) lv.style.width = Math.min(100, level * 500) + '%';

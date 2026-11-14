@@ -30,6 +30,8 @@
     <div class="rockets"><span class="meter-label">ROCKETS</span><span id="hud-rockets"></span></div>
   </div>
   <div id="hud-prompt"></div>
+  <div id="hud-warn"></div>
+  <canvas id="minimap" width="234" height="234"></canvas>
 </div>
 
 <div id="hud-players" class="hidden"></div>
@@ -94,7 +96,7 @@
     </div>
     <div class="controls">
       <b>WASD</b> move &middot; <b>SHIFT</b> sprint &middot; <b>C</b> crouch (quiet) &middot; <b>F</b> flashlight &middot; <b>E</b> hide in wardrobes &middot;
-      <b>CLICK / R</b> fire rocket (stuns) &middot; <b>V</b> mute mic &middot; <b>ESC</b> pause
+      <b>CLICK / R</b> fire rocket (stuns) &middot; <b>V</b> mic on / mute &middot; <b>ESC</b> pause
     </div>
   </div>
 </div>
@@ -115,6 +117,7 @@
       </div>
     </div>
     <button class="btn" id="btn-voice">ENABLE MICROPHONE</button>
+    <div id="lobby-mic" class="hidden"><span>YOUR MIC</span><i><b id="lobby-mic-level"></b></i></div>
     <p class="hint" id="voice-hint">Voices carry about 25 metres and are muffled through walls. Headphones recommended. The Bellhop can hear you too.</p>
     <button class="btn primary" id="btn-start">START SHIFT</button>
     <p class="hint" id="lobby-wait">Waiting for the host to start the shift&hellip;</p>

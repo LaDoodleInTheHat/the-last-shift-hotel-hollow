@@ -23,6 +23,7 @@ export class Net {
     return new Promise((resolve, reject) => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${location.host}`);
+      ws.binaryType = 'arraybuffer';
       this.ws = ws;
       let settled = false;
       ws.onopen = () => {
@@ -40,6 +41,7 @@ export class Net {
         this.emit('closed', { wasInRoom: was });
       };
       ws.onmessage = (e) => {
+        if (typeof e.data !== 'string') { this.emit('bin', e.data); return; }
         let m;
         try { m = JSON.parse(e.data); } catch { return; }
         this.handle(m);
@@ -75,6 +77,7 @@ export class Net {
   }
 
   send(obj) { if (this.open) this.ws.send(JSON.stringify(obj)); }
+  sendBinary(buf) { if (this.open && this.ws.bufferedAmount < 128 * 1024) this.ws.send(buf); }
 
   async createRoom(name, diff) { await this.connect(); this.send({ t: 'create', name, diff }); }
   async joinRoom(code, name) { await this.connect(); this.send({ t: 'join', code, name }); }
