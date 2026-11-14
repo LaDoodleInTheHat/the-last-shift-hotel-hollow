@@ -41,6 +41,7 @@ const game = {
   seesMaid: false, maidT: 0, sendT: 0, monT: 0, hudT: 0, shake: 0, flash: 0, fear: 0,
   explored: new Uint8Array(GRID * GRID), revealT: 0, miniT: 0, warnT: 0, lobbyT: 0,
   hints: new Map(), hintGap: 0, managerSeenAt: 0,
+  scareT: 60, guest: null, flickerT: 0, stingT: 0, fliesT: 0,
 };
 const config = { iceServers: null, forceRelay: new URLSearchParams(location.search).has('relay') };
 
@@ -108,6 +109,9 @@ function cleanupGame() {
   ui.prompt('', '');
   world.setSpectate(false);
   world.setFear(0); world.setScreenFlash(0);
+  world.hideGuest(); world.setDread(0);
+  game.guest = null; game.flickerT = 0;
+  audio.setFlies(0, 0, 0, false);
   if (audio.ready) audio.silenceMonsters();
 }
 
@@ -139,6 +143,7 @@ function startGame(seed, diff, opts = {}) {
   game.nextPower = game.time + rand(game.cfg.powerMin, game.cfg.powerMax); game.powerUntil = -1;
   game.seesMaid = false; game.shake = 0; game.flash = 0; game.fear = 0;
   game.explored.fill(0); game.revealT = 0; game.hints.clear(); game.hintGap = game.clock + 9; game.managerSeenAt = 0;
+  game.scareT = game.cfg.grace * 0.6 + rand(8, 25); game.stingT = 0; game.fliesT = 0;
   world.setElevatorUnlocked(false);
 
   Object.assign(me, {
@@ -219,6 +224,17 @@ function takePickup(id, byName, silent) {
 
 function collect(p) {
   takePickup(p.id, null, false);
+  if (p.type === 'key') {
+    // the hotel notices every keycard you take
+    const n = game.keys;
+    setTimeout(() => {
+      if (game.mode !== 'playing' || !me.alive) return;
+      world.blackoutNear(me.x, me.z, 18, 1.4 + n * 0.25);
+      if (n >= 2) audio.play('farScream');
+      if (n >= 3) setTimeout(() => audio.play('whisper', Math.random() < 0.5 ? -0.9 : 0.9), 900);
+    }, 700);
+    game.scareT = Math.min(game.scareT, rand(14, 24));
+  }
   if (p.type === 'battery') {
     me.battery = Math.min(100, me.battery + 60);
     audio.play('battery'); ui.toast('Battery  +60%', 'small', 1800);
@@ -430,6 +446,7 @@ function updatePlayer(dt) {
     }
     if (me.battery <= 0) { me.flashOn = false; level = 0; audio.play('empty'); ui.toast('Your flashlight has died.', 'bad', 3000); }
   }
+  if (game.flickerT > 0 && level > 0) level *= Math.sin(t * 53) + Math.sin(t * 31.7) > 0.2 ? 0.04 : 0.7; // it stutters for no reason
   me.flashLevel = level;
   // beam sway: lags behind the view and bobs with each step
   let dyaw = me.yaw - me.prevYaw;
@@ -504,6 +521,70 @@ function refreshSpectateUI() {
     '<div><i style="background:#6ad0ff"></i>Porters</div>' +
     Object.values(MONSTER_INFO).map((m) => `<div><i style="background:#${m.color.toString(16).padStart(6, '0')}"></i>${m.name}</div>`).join('') +
     '<div><i style="background:#ffe08a"></i>Keycards</div><div><i style="background:#62e07a"></i>Batteries</div><div><i style="background:#ff8a4a"></i>Rockets</div>');
+}
+
+// ---------------------------------------------------------------------------
+// Scares: things the hotel does to you that cannot actually hurt you.
+// They are local to each player, and they back off while a real monster is close.
+// ---------------------------------------------------------------------------
+function vanishGuest(loud) {
+  if (!game.guest) return;
+  game.guest = null;
+  world.hideGuest();
+  world.blackoutNear(me.x, me.z, 16, 1.3);
+  if (loud) { audio.play('sting', 0.6); game.shake = Math.max(game.shake, 0.25); }
+}
+
+/** Stand a silhouette at the far end of whatever corridor the porter is looking down. */
+function spawnGuest() {
+  const fx = -Math.sin(me.yaw), fz = -Math.cos(me.yaw);
+  let best = null, bd = 0;
+  for (const c of game.hotel.hallCells) {
+    const x = (c % GRID + 0.5) * CELL, z = (((c / GRID) | 0) + 0.5) * CELL;
+    const dx = x - me.x, dz = z - me.z, d = Math.hypot(dx, dz);
+    if (d < 9 || d > 21 || d <= bd) continue;
+    if ((dx * fx + dz * fz) / d < 0.75) continue;
+    if (!lineOfSight(game.hotel.grid, me.x, me.z, x, z, doorClosed)) continue;
+    best = { x, z }; bd = d;
+  }
+  if (!best) return false;
+  game.guest = { x: best.x, z: best.z, life: 10, seen: 0 };
+  world.showGuest(best.x, best.z, Math.atan2(me.x - best.x, me.z - best.z));
+  return true;
+}
+
+function updateScares(dt) {
+  game.flickerT = Math.max(0, game.flickerT - dt);
+  const g = game.guest;
+  if (g) {
+    g.life -= dt;
+    const dx = g.x - me.x, dz = g.z - me.z, d = Math.hypot(dx, dz) || 1;
+    const facing = (dx * -Math.sin(me.yaw) + dz * -Math.cos(me.yaw)) / d;
+    if (facing > 0.8 && me.flashLevel > 0.3) g.seen += dt;
+    if (d < 7) vanishGuest(true);                      // walk toward it and it is simply gone
+    else if (g.seen > 1.7 || g.life <= 0) vanishGuest(false);
+    return;
+  }
+  game.scareT -= dt;
+  if (game.scareT > 0 || me.hidden) return;
+  if (game.monsters.nearest(me.x, me.z).dist < 15) { game.scareT = 10; return; }
+  const dread = game.keys / 5;
+  game.scareT = rand(32, 66) * (1 - 0.45 * dread);
+  const r = Math.random();
+  const side = Math.random() < 0.5 ? -0.88 : 0.88;
+  if (r < 0.3 && spawnGuest()) return;
+  if (r < 0.5) { audio.play('whisper', side); return; }
+  if (r < 0.66) { game.flickerT = rand(1.2, 2.4); audio.play('toggle'); return; }
+  if (r < 0.8) {
+    let door = null, bd = Infinity;
+    for (const d of world.doors) {
+      const dd = Math.hypot(d.x - me.x, d.z - me.z);
+      if (dd > 5 && dd < 22 && dd < bd) { bd = dd; door = d; }
+    }
+    if (door) { audio.play('slam', door.x, door.z); return; }
+  }
+  if (r < 0.92) { world.blackoutNear(me.x, me.z, 20, 2.2); audio.play('farScream'); return; }
+  audio.play('breath', side);
 }
 
 // ---------------------------------------------------------------------------
@@ -896,6 +977,7 @@ function tick(dt) {
     if (m) die(m.type);
   }
   updateRockets(dt);
+  if (game.mode === 'playing' && me.alive && !game.dying && !game.over) updateScares(dt);
 
   // --- camera
   game.shake = Math.max(0, game.shake - dt * 1.6);
@@ -928,7 +1010,31 @@ function tick(dt) {
   const near = game.monsters.nearest(cam.position.x, cam.position.z);
   const tension = me.alive && game.mode === 'playing' && !game.over ? clamp(1 - near.dist / 15, 0, 1) : 0;
   game.fear += (tension - game.fear) * Math.min(1, dt * 3);
-  world.setFear(game.mode === 'spectating' ? 0 : game.fear * 0.85);
+  // the edges of your vision throb with your pulse when something is close
+  const pulse = Math.pow(Math.max(0, Math.sin(game.clock * (4.5 + game.fear * 5))), 6) * 0.3 * game.fear;
+  world.setFear(game.mode === 'spectating' ? 0 : game.fear * 0.85 + pulse);
+  world.setDread(game.keys / 5);
+  // a hit of strings the moment one of them steps into view
+  game.stingT -= dt;
+  if (game.stingT <= 0 && tension > 0.2 && near.monster && near.monster.state !== S.stunned) {
+    const m = near.monster, dx = m.x - me.x, dz = m.z - me.z, d = Math.hypot(dx, dz) || 1;
+    if ((dx * -Math.sin(me.yaw) + dz * -Math.cos(me.yaw)) / d > 0.6 && lineOfSight(game.hotel.grid, me.x, me.z, m.x, m.z, doorClosed)) {
+      game.stingT = 30;
+      audio.play('sting', 1);
+      game.shake = Math.max(game.shake, 0.3);
+    }
+  }
+  // flies around the nearest dead birds
+  game.fliesT -= dt;
+  if (game.fliesT <= 0) {
+    game.fliesT = 0.25;
+    let bird = null, bd = 9;
+    for (const b of game.hotel.birds) {
+      const d = Math.hypot(b.x - cam.position.x, b.z - cam.position.z);
+      if (d < bd) { bd = d; bird = b; }
+    }
+    if (bird && game.mode !== 'spectating') audio.setFlies(bird.x, 0.25, bird.z, true); else audio.setFlies(0, 0, 0, false);
+  }
   world.setScreenFlash(game.flash);
   cam.getWorldDirection(tmpV);
   audio.setListener(cam.position.x, cam.position.y, cam.position.z, tmpV.x, tmpV.y, tmpV.z);
@@ -1071,6 +1177,11 @@ function boot() {
   world = new World(canvas);
   net = new Net();
   ui = new UI(handlers, audio);
+  world.onPortraitChange = (p) => {
+    if (game.mode !== 'playing' || !me.alive) return;
+    const dx = p.x - me.x, dz = p.z - me.z, d = Math.hypot(dx, dz) || 1;
+    audio.play('whisper', clamp((dx * Math.cos(me.yaw) - dz * Math.sin(me.yaw)) / d, -1, 1));
+  };
   fetch('/config.json').then((r) => r.json()).then((c) => { if (c && Array.isArray(c.iceServers)) config.iceServers = c.iceServers; }).catch(() => {});
   setupNet();
   setupInput();

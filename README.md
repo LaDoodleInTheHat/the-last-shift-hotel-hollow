@@ -55,6 +55,16 @@ when something is close.
 - **The Bellhop** crawls on patrol and hunts by sound: sprinting, rockets and your voice chat all attract him. He charges on sight, then has to rest.
 - **The Manager** arrives after the fifth keycard, knows where everyone is (wardrobes included) and shrugs off rockets quickly.
 
+### The hotel itself
+
+Not everything in the building can hurt you, but none of it is friendly:
+
+- Rooms that hold a keycard have dead crows thrown into the corners, with flies you can hear from the corridor.
+- Some portraits change once you have looked at them and turned your back.
+- A silhouette sometimes stands at the far end of a corridor. Walk toward it and it is gone.
+- Whispers, breathing, slamming doors, a stuttering flashlight and local blackouts come and go, more often with every keycard you take. The fog also closes in.
+- These scares are local to each player and stay away while a real monster is close.
+
 ### Co-op, voice and spectating
 
 - One player opens a shift and shares the 4-letter code. Keycards are shared by the team.

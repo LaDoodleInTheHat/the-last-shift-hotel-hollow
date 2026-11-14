@@ -639,7 +639,56 @@ function portrait(seed) {
     ell(ctx, fr / 2, 18 + i * ((H - 36) / 16), 3, 3); ctx.fill();
     ell(ctx, W - fr / 2, 18 + i * ((H - 36) / 16), 3, 3); ctx.fill();
   }
-  return { tex: toTex(c, false), eyes };
+  // the same sitter, as they look once you have turned your back
+  const c2 = mk(W, H), k2 = c2.getContext('2d');
+  k2.drawImage(c, 0, 0);
+  const r2 = mulberry32(seed ^ 0x5c3a);
+  k2.fillStyle = 'rgba(40,0,0,0.22)'; k2.fillRect(20, 20, W - 40, H - 40);
+  for (const e of eyes) {
+    k2.fillStyle = '#020000'; ell(k2, e.x, e.y, 15, 12); k2.fill();
+    for (let i = 0; i < 4; i++) {
+      k2.strokeStyle = `rgba(70,0,0,${0.7 + r2() * 0.3})`; k2.lineWidth = 1.5 + r2() * 3; k2.lineCap = 'round';
+      let x = e.x - 9 + i * 6, y = e.y + 8;
+      const end = y + 30 + r2() * 80;
+      k2.beginPath(); k2.moveTo(x, y);
+      while (y < end) { y += 9; x += (r2() - 0.5) * 4; k2.lineTo(x, y); }
+      k2.stroke();
+    }
+  }
+  k2.fillStyle = '#020000'; ell(k2, cx, my + 12, 15, 28); k2.fill();
+  k2.strokeStyle = '#2a0606'; k2.lineWidth = 3; ell(k2, cx, my + 12, 15, 28); k2.stroke();
+  return { tex: toTex(c, false), tex2: toTex(c2, false), eyes };
+}
+
+const SCRAWLS = ["DON'T LOOK AWAY", 'HE RINGS FOR YOU', 'CHECK OUT', 'STAY QUIET', 'SHE ONLY CRIES', 'NO VACANCY', 'IT HEARS YOU'];
+
+/** Words finger-painted on the wallpaper. Transparent background. */
+function scrawl(text, seed) {
+  const rng = mulberry32(seed);
+  const W = 512, H = 256;
+  const c = mk(W, H), ctx = c.getContext('2d');
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+  let size = 88;
+  ctx.font = `bold ${size}px Georgia, serif`;
+  while (ctx.measureText(text).width > W - 70 && size > 30) { size -= 4; ctx.font = `bold ${size}px Georgia, serif`; }
+  let x = (W - ctx.measureText(text).width) / 2;
+  for (const ch of text) {
+    const w = ctx.measureText(ch).width;
+    const y = H * 0.4 + (rng() - 0.5) * 16;
+    ctx.save();
+    ctx.translate(x + w / 2, y); ctx.rotate((rng() - 0.5) * 0.24);
+    ctx.fillStyle = `rgba(${22 + rng() * 22},0,0,${0.86 + rng() * 0.12})`;
+    ctx.fillText(ch, 0, 0);
+    ctx.restore();
+    if (ch !== ' ' && rng() < 0.6) {
+      const dx = x + w * (0.3 + rng() * 0.4), len = 20 + rng() * 95, dw = 2 + rng() * 3;
+      ctx.fillStyle = 'rgba(26,0,0,0.9)';
+      ctx.fillRect(dx, y + size * 0.15, dw, len);
+      ell(ctx, dx + dw / 2, y + size * 0.15 + len, dw * 0.9, dw * 1.3); ctx.fill();
+    }
+    x += w;
+  }
+  return toTex(c, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -1013,6 +1062,7 @@ export function getTextures() {
     t.faces[type] = toTex(faceCanvas(type), false);
     t.torsos[type] = torso(type);
   }
+  t.scrawls = SCRAWLS.map((s, i) => scrawl(s, 301 + i * 11));
   t.plate = plate;
   cached = t;
   return t;

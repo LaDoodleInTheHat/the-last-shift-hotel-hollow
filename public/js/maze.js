@@ -487,7 +487,7 @@ export function generateHotel(seed) {
       const w = cellCenter(x, y);
       portraits.push({
         x: w.x + DIRS[d][0] * (CELL / 2 - 0.035), y: 1.72, z: w.z + DIRS[d][1] * (CELL / 2 - 0.035),
-        ry: Math.atan2(-DIRS[d][0], -DIRS[d][1]), variant: ri(8),
+        ry: Math.atan2(-DIRS[d][0], -DIRS[d][1]), variant: ri(8), cell: c,
       });
       break;
     }
@@ -526,7 +526,52 @@ export function generateHotel(seed) {
     }
   }
 
+  // --- 12. Dead birds, thrown into the corners of every room that holds a keycard ---------
+  // (generated last so everything above stays identical for a given seed)
+  const birds = [];
+  for (const room of keyRooms) {
+    const X0 = room.x0 * CELL, X1 = (room.x1 + 1) * CELL, Z0 = room.y0 * CELL, Z1 = (room.y1 + 1) * CELL;
+    const solids = [room.bed, room.nightstand, room.wardrobe, room.dresser].filter(Boolean);
+    for (const [cx, cz, sx, sz] of [[X0, Z0, 1, 1], [X1, Z0, -1, 1], [X0, Z1, 1, -1], [X1, Z1, -1, -1]]) {
+      const n = 1 + ri(3);
+      let placed = 0;
+      for (let i = 0; i < n; i++) {
+        const x = cx + sx * (0.28 + rng() * 0.95), z = cz + sz * (0.28 + rng() * 0.95);
+        const ry = rng() * Math.PI * 2, s = 0.85 + rng() * 0.5, pose = ri(3);
+        if (solids.some((f) => Math.abs(x - f.x) < f.sx / 2 + 0.18 && Math.abs(z - f.z) < f.sz / 2 + 0.18)) continue;
+        birds.push({ x, z, ry, s, pose, room: room.id });
+        placed++;
+      }
+      if (placed) {
+        blood.push({ wall: false, x: cx + sx * 0.62, y: 0.014, z: cz + sz * 0.62, ry: rng() * Math.PI * 2, size: 0.9 + rng() * 0.8, variant: ri(2), spin: 0 });
+      }
+    }
+  }
+
+  // --- 13. Things written on the corridor walls ------------------------------------------
+  const scrawls = [];
+  const takenWalls = new Set(portraits.map((p) => p.cell));
+  for (const c of shuffle(hallCells.slice(), rng)) {
+    if (scrawls.length >= 10) break;
+    if (takenWalls.has(c) || distFromStart[c] < 4) continue;
+    const x = c % GRID, y = (c / GRID) | 0;
+    const walls = [];
+    for (let d = 0; d < 4; d++) {
+      const nx = x + DIRS[d][0], ny = y + DIRS[d][1];
+      if (!inBounds(nx, ny) || grid[idx(nx, ny)] === T.WALL) walls.push(d);
+    }
+    if (!walls.length) continue;
+    const d = walls[ri(walls.length)];
+    const w = cellCenter(x, y);
+    scrawls.push({
+      x: w.x + DIRS[d][0] * (CELL / 2 - 0.025), y: 1.78 + rng() * 0.25, z: w.z + DIRS[d][1] * (CELL / 2 - 0.025),
+      ry: Math.atan2(-DIRS[d][0], -DIRS[d][1]), variant: scrawls.length % 7,
+    });
+    takenWalls.add(c);
+  }
+
   return {
+    birds, scrawls,
     seed, grid, rooms, startCell, start: cellCenter(startCell.x, startCell.y),
     startFacing: startDE ? { x: DIRS[startDE.open][0], z: DIRS[startDE.open][1] } : { x: 0, z: -1 },
     elevator: elev, pickups, lights, portraits, blood, noExit, monsterSpawns,

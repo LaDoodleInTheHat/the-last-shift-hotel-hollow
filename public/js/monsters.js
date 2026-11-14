@@ -47,6 +47,12 @@ function buildConcierge(tx) {
   part(body, 0.38, 0.7, 0.2, [suit, suit, suit, suit, lam(0xffffff, { map: tx.torsos.concierge }), suit], 0, 1.43, 0);
   part(body, 0.08, 0.1, 0.08, skin, 0, 1.83, 0);
   const head = part(body, 0.25, 0.34, 0.23, faced(tx.faces.concierge, skin), 0, 2.03, 0);
+  // two pinpricks of light you can see long before you can see him
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Sprite(new THREE.SpriteMaterial({ map: tx.glow, color: 0xfff6e0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
+    eye.scale.setScalar(0.045); eye.position.set(s * 0.052, 0.04, 0.125);
+    head.add(eye);
+  }
   const armL = pivot(body, -0.24, 1.74, 0), armR = pivot(body, 0.24, 1.74, 0);
   part(armL, 0.09, 0.98, 0.1, suit, 0, -0.49, 0); part(armL, 0.08, 0.14, 0.09, skin, 0, -1.04, 0);
   part(armR, 0.09, 0.62, 0.1, suit, 0, -0.31, 0);

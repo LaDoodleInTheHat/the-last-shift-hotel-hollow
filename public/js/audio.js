@@ -173,7 +173,7 @@ export class AudioEngine {
       }
     }
     this.thumpT -= dt;
-    if (this.thumpT <= 0) { this.thumpT = rand(7, 20); this.distantThump(); }
+    if (this.thumpT <= 0) { this.thumpT = rand(7, 20); if (Math.random() < 0.1) this.sfx_farScream(); else this.distantThump(); }
     this.creakT -= dt;
     if (this.creakT <= 0) { this.creakT = rand(9, 24) * (moving ? 0.5 : 1); this.creak(rand(0.03, 0.07), rand(-1, 1)); }
   }
@@ -336,6 +336,94 @@ export class AudioEngine {
       this.tone(this.sfx, 'sine', f, f, t + 0.9 + i * 0.22, 3.4, 0.16, 0.3);
       this.tone(this.sfx, 'triangle', f * 2, f * 2, t + 0.9 + i * 0.22, 2.4, 0.04, 0.3);
     });
+  }
+
+  // --- scares ---------------------------------------------------------------
+  /** The orchestra hit when something steps into your light. */
+  sfx_sting(vol = 1) {
+    const c = this.ctx, t = this.now;
+    const ws = c.createWaveShaper(); ws.curve = this.distCurve;
+    const g = c.createGain(); g.gain.value = 0.5 * vol;
+    ws.connect(g).connect(this.master);
+    for (const f of [110, 116.5, 233.1, 247, 466.2, 493.9]) this.tone(ws, 'sawtooth', f, f * 0.985, t, 1.9, 0.28, 0.004);
+    this.noise(ws, 'lowpass', 5000, 300, 0.7, t, 0.5, 0.6, 0.002);
+    this.tone(this.master, 'sine', 60, 30, t, 1.4, 0.8 * vol, 0.004);
+    setTimeout(() => { try { g.disconnect(); } catch { /* gone */ } }, 3000);
+  }
+
+  /** Someone murmuring just behind one ear. No words you can make out. */
+  sfx_whisper(pan = 0) {
+    const c = this.ctx, t = this.now;
+    const p = c.createStereoPanner(); p.pan.value = pan; p.connect(this.sfx);
+    let tt = t;
+    const n = 5 + ((Math.random() * 6) | 0);
+    for (let i = 0; i < n; i++) {
+      const d = rand(0.09, 0.26);
+      this.noise(p, 'bandpass', rand(1400, 3200), rand(1400, 3200), 3.5, tt, d, rand(0.3, 0.55), d * 0.35);
+      this.noise(p, 'highpass', 5200, 5200, 0.7, tt, d * 0.6, 0.07, 0.01);
+      tt += d + rand(0.01, 0.12);
+    }
+    setTimeout(() => { try { p.disconnect(); } catch { /* gone */ } }, 5000);
+  }
+
+  /** Slow breathing that is not yours. */
+  sfx_breath(pan = 0) {
+    const c = this.ctx, t = this.now;
+    const p = c.createStereoPanner(); p.pan.value = pan; p.connect(this.sfx);
+    for (let i = 0; i < 2; i++) {
+      const tt = t + i * 2.3;
+      this.noise(p, 'bandpass', 800, 1500, 1.2, tt, 1.0, 0.3, 0.55);
+      this.noise(p, 'bandpass', 700, 380, 1.0, tt + 1.05, 1.2, 0.36, 0.25);
+    }
+    setTimeout(() => { try { p.disconnect(); } catch { /* gone */ } }, 6500);
+  }
+
+  sfx_slam(x, z) {
+    const t = this.now, out = this.at(x, 1.2, z, 6, 0.9, 3);
+    this.noise(out, 'lowpass', 1500, 90, 0.8, t, 0.55, 2.6, 0.002);
+    this.tone(out, 'sine', 95, 36, t, 0.5, 2.4, 0.003);
+    this.noise(out, 'highpass', 2500, 2500, 1, t, 0.05, 0.8, 0.001);
+  }
+
+  /** A scream from another floor, and its echoes. */
+  sfx_farScream() {
+    const c = this.ctx, t = this.now;
+    const pan = c.createStereoPanner(); pan.pan.value = rand(-0.9, 0.9);
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500;
+    lp.connect(pan).connect(this.sfx);
+    for (let e = 0; e < 4; e++) {
+      const tt = t + e * 0.31, v = 0.16 / (1 + e * 1.7);
+      for (const f of [760, 1013]) {
+        const o = this.tone(lp, 'sawtooth', f, f * 0.6, tt, 1.7, v, 0.12);
+        o.frequency.linearRampToValueAtTime(f * 1.3, tt + 0.35);
+      }
+    }
+    setTimeout(() => { try { pan.disconnect(); } catch { /* gone */ } }, 4500);
+  }
+
+  /** Flies. They gather where the birds are. */
+  setFlies(x, y, z, on) {
+    if (!this.ctx) return;
+    if (!this.flies) {
+      if (!on) return;
+      const c = this.ctx, t = this.now;
+      const p = this.makePanner(1.1, 2.6);
+      const g = c.createGain(); g.gain.value = 0;
+      const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 950; bp.Q.value = 1.6;
+      for (const [f, rate] of [[188, 21], [207, 27], [231, 17]]) {
+        const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+        const l = c.createOscillator(), lg = c.createGain(); l.frequency.value = rate; lg.gain.value = 26;
+        l.connect(lg).connect(o.frequency); l.start(t);
+        const am = c.createGain(); am.gain.value = 0.5;
+        const l2 = c.createOscillator(), l2g = c.createGain(); l2.frequency.value = rand(0.3, 1.1); l2g.gain.value = 0.5;
+        l2.connect(l2g).connect(am.gain); l2.start(t);
+        o.connect(am).connect(bp); o.start(t);
+      }
+      bp.connect(g).connect(p).connect(this.sfx);
+      this.flies = { p, g };
+    }
+    this.setPannerPos(this.flies.p, x, y, z);
+    this.flies.g.gain.setTargetAtTime(on ? 0.55 : 0, this.now, 0.3);
   }
 
   /** The jumpscare. Each member of staff sounds different up close. */

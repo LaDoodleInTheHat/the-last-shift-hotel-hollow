@@ -25,6 +25,67 @@ function mirrored(tex) {
   return t;
 }
 
+/** Bakes several transformed, flat-coloured primitives into one geometry. */
+function mergeParts(parts) {
+  const pos = [], nor = [], col = [];
+  const v = new THREE.Vector3(), n = new THREE.Vector3(), nm = new THREE.Matrix3();
+  for (const part of parts) {
+    const g = part.geo.index ? part.geo.toNonIndexed() : part.geo;
+    nm.getNormalMatrix(part.matrix);
+    const P = g.attributes.position, N = g.attributes.normal;
+    for (let i = 0; i < P.count; i++) {
+      v.fromBufferAttribute(P, i).applyMatrix4(part.matrix); pos.push(v.x, v.y, v.z);
+      n.fromBufferAttribute(N, i).applyMatrix3(nm).normalize(); nor.push(n.x, n.y, n.z);
+      col.push(part.color[0], part.color[1], part.color[2]);
+    }
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return out;
+}
+
+/** A dead crow, about 30 cm long, lying on its back at the origin with its head toward +Z. */
+function birdGeometry() {
+  const M = (x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) =>
+    new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz, 'YXZ')), new THREE.Vector3(sx, sy, sz));
+  const black = [0.006, 0.006, 0.009], dark = [0.016, 0.016, 0.022], horn = [0.16, 0.12, 0.035], leg = [0.07, 0.055, 0.035], gore = [0.22, 0.0, 0.0];
+  // a flat polygon lying in the XZ plane (triangle fan), used for wings, tail and loose feathers
+  const flat = (pts) => {
+    const pos = [], nor = [];
+    for (let i = 1; i < pts.length - 1; i++) {
+      for (const p of [pts[0], pts[i], pts[i + 1]]) { pos.push(p[0], 0, p[1]); nor.push(0, 1, 0); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    return g;
+  };
+  const wingR = flat([[0, 0.06], [0.11, 0.075], [0.2, 0.05], [0.27, -0.01], [0.21, -0.03], [0.16, -0.06], [0.1, -0.05], [0.05, -0.07], [0, -0.05]]);
+  const wingL = flat([[0, 0.06], [-0.09, 0.07], [-0.17, 0.03], [-0.2, -0.04], [-0.13, -0.05], [-0.07, -0.075], [0, -0.05]]);
+  const tail = flat([[-0.02, 0], [0.02, 0], [0.055, -0.13], [0.02, -0.11], [0, -0.14], [-0.03, -0.11], [-0.05, -0.12]]);
+  const feather = flat([[0, 0.035], [0.012, 0.01], [0.009, -0.03], [0, -0.04], [-0.009, -0.03], [-0.012, 0.01]]);
+  const parts = [
+    { geo: new THREE.SphereGeometry(0.07, 9, 7), matrix: M(0, 0.047, 0, 0, 0, 0, 1, 0.66, 1.75), color: black },
+    { geo: new THREE.SphereGeometry(0.043, 8, 6), matrix: M(0.03, 0.034, 0.15, 0, 0.5, 0.6), color: dark },
+    { geo: new THREE.ConeGeometry(0.014, 0.07, 5), matrix: M(0.058, 0.03, 0.205, Math.PI / 2, 0.55, 0), color: horn },
+    { geo: wingR, matrix: M(0.045, 0.012, 0.01, 0, 0.25, 0.1), color: dark },
+    { geo: wingL, matrix: M(-0.045, 0.02, 0.0, 0, -0.5, -0.45), color: dark },
+    { geo: tail, matrix: M(0, 0.012, -0.1, 0, 0.15, 0), color: black },
+    { geo: new THREE.BoxGeometry(0.007, 0.085, 0.007), matrix: M(-0.024, 0.105, -0.03, 0.55, 0, 0.25), color: leg },
+    { geo: new THREE.BoxGeometry(0.007, 0.085, 0.007), matrix: M(0.024, 0.1, -0.045, 0.2, 0, -0.4), color: leg },
+    { geo: new THREE.BoxGeometry(0.03, 0.006, 0.03), matrix: M(-0.045, 0.14, -0.05, 0.4, 0.6, 0.2), color: leg },
+    { geo: new THREE.BoxGeometry(0.03, 0.006, 0.03), matrix: M(0.04, 0.14, -0.055, 0.2, -0.3, -0.3), color: leg },
+    { geo: new THREE.SphereGeometry(0.024, 6, 5), matrix: M(0.012, 0.08, 0.03, 0, 0, 0, 1.3, 0.5, 1.5), color: gore },
+  ];
+  // feathers torn loose around the body
+  for (const [x, z, r] of [[0.24, 0.16, 0.4], [-0.21, 0.19, 2.1], [-0.3, -0.12, 4.0], [0.16, -0.27, 5.2], [0.34, -0.06, 1.1], [-0.08, 0.33, 3.0], [-0.36, 0.08, 0.2]]) {
+    parts.push({ geo: feather, matrix: M(x, 0.008, z, 0, r, 0), color: dark });
+  }
+  return mergeParts(parts);
+}
+
 // ---------------------------------------------------------------------------
 // Geometry builder: accumulates quads/boxes into one BufferGeometry.
 // ---------------------------------------------------------------------------
@@ -337,6 +398,31 @@ export class World {
       blood: tx.blood.map((m) => L({ map: m, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
     };
     this.matList = Object.values(this.mats).flat();
+    this.birdMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    this.scrawlMats = tx.scrawls.map((m) => L({ map: m, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+    this.matList.push(this.birdMat, ...this.scrawlMats);
+    this._fwd = new THREE.Vector3();
+    this.dread = 0;
+    this.onPortraitChange = null;
+
+    // "The Guest": an unlit silhouette that is sometimes standing at the end of the corridor.
+    {
+      const black = new THREE.MeshBasicMaterial({ color: 0x010101 });
+      const g = new THREE.Group();
+      const add = (w, h, d, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), black); m.position.set(x, y, z); g.add(m); return m; };
+      add(0.13, 0.9, 0.14, -0.09, 0.45, 0); add(0.13, 0.9, 0.14, 0.09, 0.45, 0);
+      add(0.36, 0.8, 0.18, 0, 1.3, 0);
+      add(0.2, 0.27, 0.2, 0, 1.87, 0);
+      add(0.08, 1.05, 0.09, -0.24, 1.17, 0); add(0.08, 1.05, 0.09, 0.24, 1.17, 0);
+      for (const s of [-1, 1]) {
+        const eye = new THREE.Sprite(new THREE.SpriteMaterial({ map: tx.glow, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
+        eye.scale.setScalar(0.05); eye.position.set(s * 0.045, 1.9, 0.11);
+        g.add(eye);
+      }
+      g.visible = false;
+      this.scene.add(g);
+      this.guest = g;
+    }
 
     this.hotel = null;
     this.fixtures = [];
@@ -386,6 +472,8 @@ export class World {
     this.fixtures = []; this.doors = []; this.doorByCell.clear(); this.portraits = []; this.pickups.clear();
     for (const s of this.pool) { s.fixture = null; s.target = null; s.gain = 0; s.light.intensity = 0; }
     this.elev = null; this.elevUnlocked = false; this.powerOut = false; this.viewerCell = -1;
+    if (this.guest) this.guest.visible = false;
+    this.dread = 0;
   }
 
   // -------------------------------------------------------------------------
@@ -508,7 +596,10 @@ export class World {
     const pw = 0.8, ph = 1.0;
     const portraitGeo = new THREE.PlaneGeometry(pw, ph);
     const pupilGeo = new THREE.CircleGeometry(0.0125, 10);
-    if (!this.portraitMats) this.portraitMats = this.tex.portraits.map((p) => new THREE.MeshLambertMaterial({ map: p.tex }));
+    if (!this.portraitMats) {
+      this.portraitMats = this.tex.portraits.map((p) => new THREE.MeshLambertMaterial({ map: p.tex }));
+      this.portraitScreamMats = this.tex.portraits.map((p) => new THREE.MeshLambertMaterial({ map: p.tex2 }));
+    }
     for (const p of hotel.portraits) {
       const def = this.tex.portraits[p.variant];
       const g = new THREE.Group();
@@ -525,9 +616,39 @@ export class World {
         return { mesh: pm, bx, by };
       });
       this.level.add(g);
-      this.portraits.push({ x: p.x, y: p.y, z: p.z, cos: Math.cos(p.ry), sin: Math.sin(p.ry), pupils, ox: 0, oy: 0 });
+      this.portraits.push({
+        x: p.x, y: p.y, z: p.z, cos: Math.cos(p.ry), sin: Math.sin(p.ry), pupils, ox: 0, oy: 0,
+        mesh: m, variant: p.variant, canChange: this.portraits.length % 5 < 2, armed: false, changed: false,
+      });
     }
-    this.sharedMats = new Set([...this.matList, ...this.portraitMats]);
+    this.sharedMats = new Set([...this.matList, ...this.portraitMats, ...this.portraitScreamMats]);
+
+    // --- dead birds in the corners of keycard rooms ---
+    if (hotel.birds.length) {
+      const birds = new THREE.InstancedMesh(birdGeometry(), this.birdMat, hotel.birds.length);
+      const q = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, 'YXZ'), pos = new THREE.Vector3(), sc = new THREE.Vector3();
+      const bm = new THREE.Matrix4();
+      hotel.birds.forEach((b, i) => {
+        // pose 0: on its back, 1: mirrored, 2: flattened
+        e.set(0, b.ry, 0);
+        q.setFromEuler(e);
+        pos.set(b.x, 0, b.z);
+        const s = b.s * 1.45; // crows are bigger than you think
+        sc.set(b.pose === 1 ? -s : s, s * (b.pose === 2 ? 0.55 : 1), s);
+        birds.setMatrixAt(i, bm.compose(pos, q, sc));
+      });
+      birds.castShadow = true; birds.receiveShadow = true;
+      birds.frustumCulled = false;
+      this.level.add(birds);
+    }
+
+    // --- writing on the walls ---
+    const scrawlGeo = new THREE.PlaneGeometry(1.7, 0.85);
+    for (const s of hotel.scrawls) {
+      const m = new THREE.Mesh(scrawlGeo, this.scrawlMats[s.variant % this.scrawlMats.length]);
+      m.position.set(s.x, s.y, s.z); m.rotation.y = s.ry;
+      this.level.add(m);
+    }
 
     // --- the bricked-up front doors behind the start ---
     if (hotel.noExit) {
@@ -677,7 +798,8 @@ export class World {
 
   setSpectate(on) {
     this.spectate = on;
-    this.scene.fog.density = on ? 0.0035 : FOG_DENSITY;
+    this.scene.fog.density = on ? 0.0035 : FOG_DENSITY * (1 + 0.35 * this.dread);
+    if (on) this.guest.visible = false;
     this.scene.background.setHex(on ? 0x0a0b10 : 0x030202);
     this.scene.fog.color.setHex(on ? 0x0a0b10 : 0x050303);
     this.hemi.intensity = on ? 3.2 : HEMI;
@@ -882,6 +1004,8 @@ export class World {
   }
 
   updatePortraits(dt, viewer) {
+    this.camera.getWorldDirection(this._fwd);
+    const fx = this._fwd.x, fz = this._fwd.z;
     for (const p of this.portraits) {
       const dx = viewer.x - p.x, dy = viewer.y - p.y, dz = viewer.z - p.z;
       const d2 = dx * dx + dz * dz;
@@ -891,6 +1015,18 @@ export class World {
         if (lz > 0.05) {
           tx = THREE.MathUtils.clamp(lx / (lz + 0.4), -1, 1) * 0.0165;
           ty = THREE.MathUtils.clamp(dy / (lz + 0.4), -1, 1) * 0.007;
+        }
+        // some sitters change once you have looked at them and then turned your back
+        if (p.canChange && !p.changed && lz > 0.3 && !this.spectate) {
+          const d = Math.sqrt(d2) || 1;
+          const facing = (-dx * fx - dz * fz) / d; // 1 = looking straight at the painting
+          if (facing > 0.6 && d < 5) p.armed = true;
+          else if (p.armed && facing < -0.15 && d < 8) {
+            p.changed = true;
+            p.mesh.material = this.portraitScreamMats[p.variant];
+            for (const e of p.pupils) e.mesh.visible = false;
+            if (this.onPortraitChange) this.onPortraitChange(p);
+          }
         }
       } else if (p.ox === 0 && p.oy === 0) continue;
       p.ox += (tx - p.ox) * Math.min(1, dt * 5);
@@ -916,5 +1052,30 @@ export class World {
   }
 
   setFear(v) { this.postMat.uniforms.uFear.value = v; }
+
+  /** 0..1: the fog closes in as the keycards are collected. */
+  setDread(v) {
+    this.dread = v;
+    if (!this.spectate) this.scene.fog.density = FOG_DENSITY * (1 + 0.35 * v);
+  }
+
+  showGuest(x, z, yaw) {
+    this.guest.position.set(x, 0, z);
+    this.guest.rotation.y = yaw;
+    this.guest.visible = !this.spectate;
+  }
+
+  hideGuest() { this.guest.visible = false; }
+
+  /** Kill the lights near a point for a moment; they stutter back on. */
+  blackoutNear(x, z, radius, dur) {
+    for (const f of this.fixtures) {
+      if (f.kind === 'elev' || f.dead) continue;
+      if (Math.hypot(f.x - x, f.z - z) > radius) continue;
+      f.delay = Math.max(f.delay, dur * (0.6 + Math.random() * 0.8));
+      f.flick = 2 + 2 * Math.floor(Math.random() * 3);
+      f.t = 0;
+    }
+  }
   setScreenFlash(v) { this.postMat.uniforms.uFlash.value = v; }
 }
